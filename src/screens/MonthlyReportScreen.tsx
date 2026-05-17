@@ -9,7 +9,7 @@ import {
   RefreshControl,
   Alert,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
+import { useFocusEffect, useNavigation } from '@react-navigation/native';
 
 import { useAuthStore } from '../store/useAuthStore';
 import { formatKzt } from '../services/financeConfig';
@@ -18,8 +18,12 @@ import {
   buildPlainTextMonthlyReport,
   loadMonthlyReport,
 } from '../services/reportService';
+import { AiInsight } from '../services/financeIntelligenceService';
 import { colors, radius, shadow } from '../theme';
 import ScreenHeader from '../components/ui/ScreenHeader';
+import AppIcon from '../components/ui/AppIcon';
+import AiInsightCard from '../components/insights/AiInsightCard';
+import EmptyState from '../components/common/EmptyState';
 
 const getScoreColor = (score: number) => {
   if (score >= 80) return colors.success;
@@ -29,6 +33,7 @@ const getScoreColor = (score: number) => {
 };
 
 export default function MonthlyReportScreen() {
+  const navigation = useNavigation<any>();
   const { user } = useAuthStore();
 
   const [report, setReport] = useState<MonthlyReportData | null>(null);
@@ -69,6 +74,11 @@ export default function MonthlyReportScreen() {
     Alert.alert('Текст отчета', buildPlainTextMonthlyReport(report));
   };
 
+  const handleInsightAction = (insight: AiInsight) => {
+    if (!insight.actionRoute) return;
+    navigation.navigate(insight.actionRoute, insight.actionPayload || undefined);
+  };
+
   if (loading) {
     return (
       <View style={styles.loadingContainer}>
@@ -80,11 +90,14 @@ export default function MonthlyReportScreen() {
 
   if (!report) {
     return (
-      <View style={styles.loadingContainer}>
-        <Text style={styles.emptyTitle}>Отчет недоступен</Text>
-        <TouchableOpacity style={styles.retryButton} onPress={loadData}>
-          <Text style={styles.retryButtonText}>Повторить</Text>
-        </TouchableOpacity>
+      <View style={styles.emptyScreen}>
+        <EmptyState
+          title="Отчёт недоступен"
+          description="Не удалось сформировать отчёт. Попробуй обновить экран или добавить операции."
+          icon="report"
+          actionLabel="Повторить"
+          onAction={loadData}
+        />
       </View>
     );
   }
@@ -106,7 +119,7 @@ export default function MonthlyReportScreen() {
         />
 
         <View style={styles.heroCard}>
-          <Text style={styles.heroLabel}>Финансовый рейтинг</Text>
+          <Text style={styles.heroLabel}>Финансовое состояние</Text>
           <Text style={[styles.heroScore, { color: scoreColor }]}>
             {report.financialScore}/100
           </Text>
@@ -148,6 +161,32 @@ export default function MonthlyReportScreen() {
         </View>
 
         <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Почему такой рейтинг</Text>
+
+          {report.scoreFactors.length === 0 ? (
+            <EmptyState
+              title="Пока мало данных"
+              description="Когда появятся операции, FinBuddy объяснит, почему рейтинг стал именно таким."
+              icon="report"
+              compact
+            />
+          ) : (
+            report.scoreFactors.map((factor) => (
+              <View key={factor.id} style={styles.factorItem}>
+                <View style={styles.rowBetween}>
+                  <Text style={styles.factorTitle}>{factor.title}</Text>
+                  <Text style={factor.impact >= 0 ? styles.factorPositive : styles.factorNegative}>
+                    {factor.impact > 0 ? '+' : ''}
+                    {factor.impact}
+                  </Text>
+                </View>
+                <Text style={styles.factorText}>{factor.description}</Text>
+              </View>
+            ))
+          )}
+        </View>
+
+        <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Прогноз</Text>
 
           <View style={styles.rowBetween}>
@@ -167,13 +206,75 @@ export default function MonthlyReportScreen() {
         </View>
 
         <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Что важно сейчас</Text>
+
+          {report.insights.length === 0 ? (
+            <EmptyState
+              title="Инсайтов пока нет"
+              description="Добавь больше операций, бюджетов или подписок, чтобы FinBuddy сформировал персональные выводы."
+              icon="ai"
+              compact
+            />
+          ) : (
+            report.insights.slice(0, 4).map((insight) => (
+              <AiInsightCard
+                key={insight.id}
+                insight={insight}
+                onAction={handleInsightAction}
+                style={{ marginBottom: 10 }}
+              />
+            ))
+          )}
+        </View>
+
+        <View style={styles.sectionCard}>
+          <Text style={styles.sectionTitle}>Аномальные расходы</Text>
+
+          {report.anomalies.length === 0 ? (
+            <EmptyState
+              title="Аномалий не найдено"
+              description="Крупных расходов, которые резко выбиваются из обычного уровня, не обнаружено."
+              icon="target"
+              tone="success"
+              compact
+            />
+          ) : (
+            report.anomalies.slice(0, 5).map((item) => (
+              <View key={item.id} style={styles.anomalyItem}>
+                <View style={item.level === 'high' ? styles.anomalyHigh : styles.anomalyMedium}>
+                  <AppIcon
+                    name="budget"
+                    size={20}
+                    color={item.level === 'high' ? colors.coral : colors.amber}
+                  />
+                </View>
+
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.anomalyTitle}>{item.title}</Text>
+                  <Text style={styles.anomalySubtitle}>{item.reason}</Text>
+                </View>
+
+                <Text style={styles.anomalyAmount}>{formatKzt(item.amount)}</Text>
+              </View>
+            ))
+          )}
+        </View>
+
+        <View style={styles.sectionCard}>
           <Text style={styles.sectionTitle}>Топ расходов</Text>
 
           {report.topExpenseCategories.length === 0 ? (
-            <Text style={styles.emptyText}>Расходов за месяц пока нет.</Text>
+            <EmptyState
+              title="Расходов пока нет"
+              description="Добавь расходы за месяц, чтобы отчёт показал топ категорий."
+              icon="budget"
+              actionLabel="Добавить расход"
+              onAction={() => navigation.navigate('AddAction')}
+              compact
+            />
           ) : (
             report.topExpenseCategories.slice(0, 5).map((item, index) => (
-              <View key={item.name} style={styles.categoryRow}>
+              <View key={item.id} style={styles.categoryRow}>
                 <View style={styles.indexBox}>
                   <Text style={styles.indexText}>{index + 1}</Text>
                 </View>
@@ -203,10 +304,17 @@ export default function MonthlyReportScreen() {
           <Text style={styles.sectionTitle}>Бюджеты</Text>
 
           {report.budgetStatuses.length === 0 ? (
-            <Text style={styles.emptyText}>Бюджеты пока не установлены.</Text>
+            <EmptyState
+              title="Бюджеты пока не установлены"
+              description="Создай лимиты по категориям, чтобы FinBuddy отслеживал риск перерасхода."
+              icon="budget"
+              actionLabel="Создать бюджет"
+              onAction={() => navigation.navigate('Budgets')}
+              compact
+            />
           ) : (
             report.budgetStatuses.slice(0, 5).map((budget) => (
-              <View key={budget.categoryId} style={styles.compactItem}>
+              <View key={budget.id} style={styles.compactItem}>
                 <View style={styles.rowBetween}>
                   <Text style={styles.compactTitle}>{budget.categoryName}</Text>
                   <Text style={styles.compactValue}>{budget.percent}%</Text>
@@ -241,7 +349,14 @@ export default function MonthlyReportScreen() {
           <Text style={styles.sectionTitle}>Цели</Text>
 
           {report.goalStatuses.length === 0 ? (
-            <Text style={styles.emptyText}>Финансовые цели пока не созданы.</Text>
+            <EmptyState
+              title="Цели пока не созданы"
+              description="Добавь финансовую цель, чтобы видеть прогресс накоплений в отчёте."
+              icon="target"
+              actionLabel="Создать цель"
+              onAction={() => navigation.navigate('Goals')}
+              compact
+            />
           ) : (
             report.goalStatuses.slice(0, 5).map((goal) => (
               <View key={goal.id} style={styles.compactItem}>
@@ -268,7 +383,7 @@ export default function MonthlyReportScreen() {
         </View>
 
         <View style={styles.recommendationCard}>
-          <Text style={styles.recommendationTitle}>Рекомендация</Text>
+          <Text style={styles.recommendationTitle}>План действий</Text>
           <Text style={styles.recommendationText}>{report.recommendation}</Text>
         </View>
       </ScrollView>
@@ -280,6 +395,13 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
   content: { padding: 20, paddingBottom: 36 },
 
+  emptyScreen: {
+    flex: 1,
+    backgroundColor: colors.background,
+    justifyContent: 'center',
+    padding: 24,
+  },
+
   loadingContainer: {
     flex: 1,
     backgroundColor: colors.background,
@@ -287,13 +409,8 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-
-  loadingText: {
-    marginTop: 12,
-    fontSize: 14,
-    color: colors.textMuted,
-  },
-
+  loadingText: { marginTop: 12, fontSize: 14, color: colors.textMuted },
+  emptyTitle: { fontSize: 20, fontWeight: '900', color: colors.text },
   retryButton: {
     backgroundColor: colors.primary,
     paddingHorizontal: 18,
@@ -301,11 +418,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     marginTop: 14,
   },
-
-  retryButtonText: {
-    color: '#FFF',
-    fontWeight: '900',
-  },
+  retryButtonText: { color: '#FFF', fontWeight: '900' },
 
   heroCard: {
     backgroundColor: colors.dark,
@@ -314,38 +427,12 @@ const styles = StyleSheet.create({
     marginBottom: 14,
     ...shadow.strong,
   },
+  heroLabel: { color: '#CBD5E1', fontSize: 14, marginBottom: 4 },
+  heroScore: { fontSize: 44, fontWeight: '900' },
+  heroTitle: { color: '#FFF', fontSize: 18, fontWeight: '900', marginTop: 2 },
+  heroText: { color: '#CBD5E1', fontSize: 14, lineHeight: 20, marginTop: 10 },
 
-  heroLabel: {
-    color: '#CBD5E1',
-    fontSize: 14,
-    marginBottom: 4,
-  },
-
-  heroScore: {
-    fontSize: 44,
-    fontWeight: '900',
-  },
-
-  heroTitle: {
-    color: '#FFF',
-    fontSize: 18,
-    fontWeight: '900',
-    marginTop: 2,
-  },
-
-  heroText: {
-    color: '#CBD5E1',
-    fontSize: 14,
-    lineHeight: 20,
-    marginTop: 10,
-  },
-
-  metricsGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-  },
-
+  metricsGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between' },
   metricCard: {
     width: '48%',
     backgroundColor: colors.surface,
@@ -356,20 +443,8 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     ...shadow.card,
   },
-
-  metricLabel: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginBottom: 7,
-    fontWeight: '800',
-  },
-
-  metricValue: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: colors.text,
-  },
-
+  metricLabel: { fontSize: 12, color: colors.textMuted, marginBottom: 7, fontWeight: '800' },
+  metricValue: { fontSize: 18, fontWeight: '900', color: colors.text },
   incomeText: { color: colors.success },
   expenseText: { color: colors.danger },
 
@@ -382,53 +457,57 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     ...shadow.card,
   },
+  sectionTitle: { fontSize: 18, fontWeight: '900', color: colors.text, marginBottom: 14 },
+  emptyText: { fontSize: 14, color: colors.textMuted, lineHeight: 20, fontWeight: '700' },
 
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: '900',
-    color: colors.text,
-    marginBottom: 14,
+  rowBetween: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  rowLabel: { fontSize: 14, color: colors.textMuted, marginBottom: 10, flex: 1, fontWeight: '700' },
+  rowValue: { fontSize: 14, color: colors.text, fontWeight: '900', marginBottom: 10 },
+
+  factorItem: {
+    backgroundColor: colors.surfaceAlt,
+    borderRadius: radius.lg,
+    padding: 13,
+    marginBottom: 9,
   },
+  factorTitle: { color: colors.ink, fontSize: 14, fontWeight: '900', flex: 1 },
+  factorPositive: { color: colors.mint, fontSize: 14, fontWeight: '900', marginLeft: 8 },
+  factorNegative: { color: colors.coral, fontSize: 14, fontWeight: '900', marginLeft: 8 },
+  factorText: { color: colors.inkMuted, fontSize: 12, lineHeight: 17, fontWeight: '700' },
 
-  rowBetween: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-
-  rowLabel: {
-    fontSize: 14,
-    color: colors.textMuted,
-    marginBottom: 10,
-    flex: 1,
-    fontWeight: '700',
-  },
-
-  rowValue: {
-    fontSize: 14,
-    color: colors.text,
-    fontWeight: '900',
-    marginBottom: 10,
-  },
-
-  emptyTitle: {
-    fontSize: 20,
-    fontWeight: '900',
-    color: colors.text,
-  },
-
-  emptyText: {
-    fontSize: 14,
-    color: colors.textMuted,
-    lineHeight: 20,
-  },
-
-  categoryRow: {
+  safeBox: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 14,
+    backgroundColor: colors.mintSoft,
+    borderRadius: radius.lg,
+    padding: 13,
   },
+  safeText: { color: colors.mint, fontSize: 13, fontWeight: '900', marginLeft: 8 },
 
+  anomalyItem: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },
+  anomalyHigh: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.coralSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  anomalyMedium: {
+    width: 40,
+    height: 40,
+    borderRadius: radius.md,
+    backgroundColor: colors.amberSoft,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 10,
+  },
+  anomalyTitle: { color: colors.ink, fontSize: 14, fontWeight: '900' },
+  anomalySubtitle: { color: colors.inkMuted, fontSize: 12, lineHeight: 17, fontWeight: '700', marginTop: 2 },
+  anomalyAmount: { color: colors.ink, fontSize: 13, fontWeight: '900', marginLeft: 8 },
+
+  categoryRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 14 },
   indexBox: {
     width: 30,
     height: 30,
@@ -438,74 +517,18 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginRight: 10,
   },
+  indexText: { color: colors.primary, fontWeight: '900' },
+  categoryName: { fontSize: 14, color: colors.text, fontWeight: '900', marginBottom: 6 },
+  progressTrack: { height: 8, backgroundColor: colors.surfaceSoft, borderRadius: 999, overflow: 'hidden' },
+  progressFill: { height: '100%', backgroundColor: colors.primary, borderRadius: 999 },
+  categoryRight: { marginLeft: 10, alignItems: 'flex-end' },
+  categoryAmount: { fontSize: 13, color: colors.text, fontWeight: '900' },
+  categoryPercent: { fontSize: 12, color: colors.textMuted, marginTop: 2 },
 
-  indexText: {
-    color: colors.primary,
-    fontWeight: '900',
-  },
-
-  categoryName: {
-    fontSize: 14,
-    color: colors.text,
-    fontWeight: '900',
-    marginBottom: 6,
-  },
-
-  progressTrack: {
-    height: 8,
-    backgroundColor: colors.surfaceSoft,
-    borderRadius: 999,
-    overflow: 'hidden',
-  },
-
-  progressFill: {
-    height: '100%',
-    backgroundColor: colors.primary,
-    borderRadius: 999,
-  },
-
-  categoryRight: {
-    marginLeft: 10,
-    alignItems: 'flex-end',
-  },
-
-  categoryAmount: {
-    fontSize: 13,
-    color: colors.text,
-    fontWeight: '900',
-  },
-
-  categoryPercent: {
-    fontSize: 12,
-    color: colors.textMuted,
-    marginTop: 2,
-  },
-
-  compactItem: {
-    marginBottom: 14,
-  },
-
-  compactTitle: {
-    fontSize: 14,
-    color: colors.text,
-    fontWeight: '900',
-    marginBottom: 8,
-    flex: 1,
-  },
-
-  compactValue: {
-    fontSize: 14,
-    color: colors.primary,
-    fontWeight: '900',
-    marginBottom: 8,
-  },
-
-  compactSubtext: {
-    fontSize: 12,
-    color: colors.textMuted,
-    fontWeight: '700',
-    marginTop: 6,
-  },
+  compactItem: { marginBottom: 14 },
+  compactTitle: { fontSize: 14, color: colors.text, fontWeight: '900', marginBottom: 8, flex: 1 },
+  compactValue: { fontSize: 14, color: colors.primary, fontWeight: '900', marginBottom: 8 },
+  compactSubtext: { fontSize: 12, color: colors.textMuted, fontWeight: '700', marginTop: 6 },
 
   recommendationCard: {
     backgroundColor: colors.surfaceBlue,
@@ -514,14 +537,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.primarySoft,
   },
-
   recommendationTitle: {
     fontSize: 18,
     fontWeight: '900',
     color: colors.primaryDark,
-    marginBottom: 8,
+    marginBottom: 7,
   },
-
   recommendationText: {
     fontSize: 14,
     color: colors.primaryDark,

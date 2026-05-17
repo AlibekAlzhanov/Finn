@@ -1,31 +1,25 @@
 import { supabase } from './supabase';
 import { formatKzt } from './financeConfig';
+import {
+  AiInsight,
+  AnomalyInsight,
+  BudgetStatus,
+  buildFinanceIntelligence,
+  CategoryInsight,
+  FinanceBudget,
+  FinanceCategory,
+  FinanceGoal,
+  FinanceSubscription,
+  FinanceTransaction,
+  getCurrentMonthPeriod,
+  GoalStatus,
+  ScoreFactor,
+} from './financeIntelligenceService';
 
-export type MonthlyReportCategory = {
-  name: string;
-  amount: number;
-  percent: number;
-};
+export type MonthlyReportCategory = CategoryInsight;
 
-export type MonthlyReportBudgetStatus = {
-  categoryId: string;
-  categoryName: string;
-  limitAmount: number;
-  spentAmount: number;
-  percent: number;
-  remainingAmount: number;
-  status: 'normal' | 'warning' | 'exceeded';
-};
-
-export type MonthlyReportGoalStatus = {
-  id: string;
-  title: string;
-  targetAmount: number;
-  currentAmount: number;
-  progress: number;
-  remainingAmount: number;
-  deadline: string | null;
-};
+export type MonthlyReportBudgetStatus = BudgetStatus;
+export type MonthlyReportGoalStatus = GoalStatus;
 
 export type MonthlyReportData = {
   periodName: string;
@@ -35,15 +29,19 @@ export type MonthlyReportData = {
   totalExpense: number;
   balance: number;
   expensePercent: number;
+  savingRate: number;
   forecastExpense: number;
   dailyAverageExpense: number;
   dailySafeLimit: number;
   financialScore: number;
   financialScoreLabel: string;
+  scoreFactors: ScoreFactor[];
   topExpenseCategories: MonthlyReportCategory[];
   topIncomeCategories: MonthlyReportCategory[];
   budgetStatuses: MonthlyReportBudgetStatus[];
   goalStatuses: MonthlyReportGoalStatus[];
+  anomalies: AnomalyInsight[];
+  insights: AiInsight[];
   transactionsCount: number;
   incomeTransactionsCount: number;
   expenseTransactionsCount: number;
@@ -56,129 +54,84 @@ const safeNumber = (value: unknown) => {
   return Number.isFinite(parsed) ? parsed : 0;
 };
 
-const getCategoryNameFromTransaction = (tx: any) => {
-  const categoryData = Array.isArray(tx.categories)
-    ? tx.categories[0]
-    : tx.categories;
+const getCategoryNameFromTransaction = (
+  tx: FinanceTransaction,
+  categoryMap: Record<string, string>
+) => {
+  if (tx.category_name) return tx.category_name;
 
-  return categoryData?.name || 'Без категории';
+  const embedded = Array.isArray(tx.categories)
+    ? tx.categories[0]?.name
+    : tx.categories?.name;
+
+  if (embedded) return embedded;
+
+  if (tx.category_id && categoryMap[tx.category_id]) return categoryMap[tx.category_id];
+
+  return 'Без категории';
 };
 
 export const getCurrentMonthRange = () => {
-  const now = new Date();
-
-  const start = new Date(now.getFullYear(), now.getMonth(), 1);
-  const end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-
+  const { start, end } = getCurrentMonthPeriod();
   return {
     start,
     end,
     startIso: start.toISOString(),
     endIso: end.toISOString(),
-    periodName: now.toLocaleDateString('ru-KZ', {
+    periodName: new Date().toLocaleDateString('ru-KZ', {
       month: 'long',
       year: 'numeric',
     }),
   };
 };
 
+const buildCategoryMap = (categories: FinanceCategory[]) => {
+  const map: Record<string, string> = {};
+
+  categories.forEach((category) => {
+    if (category.id) map[category.id] = category.name || 'Без категории';
+  });
+
+  return map;
+};
+
 const groupByCategory = (
-  transactions: any[],
+  transactions: FinanceTransaction[],
+  categories: FinanceCategory[],
   type: 'income' | 'expense'
 ): MonthlyReportCategory[] => {
-  const grouped: Record<string, number> = {};
+  const categoryMap = buildCategoryMap(categories);
+  const grouped: Record<string, MonthlyReportCategory> = {};
 
   transactions
     .filter((tx) => tx.type === type)
     .forEach((tx) => {
-      const categoryName = getCategoryNameFromTransaction(tx);
+      const id = tx.category_id || 'unknown';
+      const name = getCategoryNameFromTransaction(tx, categoryMap);
+      const amount = safeNumber(tx.amount);
 
-      grouped[categoryName] =
-        (grouped[categoryName] || 0) + safeNumber(tx.amount);
+      if (!grouped[id]) {
+        grouped[id] = {
+          id,
+          name,
+          amount: 0,
+          count: 0,
+          percent: 0,
+        };
+      }
+
+      grouped[id].amount += amount;
+      grouped[id].count += 1;
     });
 
-  const total = Object.values(grouped).reduce((sum, value) => sum + value, 0);
+  const total = Object.values(grouped).reduce((sum, item) => sum + item.amount, 0);
 
-  return Object.entries(grouped)
-    .map(([name, amount]) => ({
-      name,
-      amount,
-      percent: total > 0 ? Math.round((amount / total) * 100) : 0,
+  return Object.values(grouped)
+    .map((item) => ({
+      ...item,
+      percent: total > 0 ? Math.round((item.amount / total) * 100) : 0,
     }))
     .sort((a, b) => b.amount - a.amount);
-};
-
-const calculateForecastExpense = (totalExpense: number) => {
-  const now = new Date();
-
-  const currentDay = now.getDate();
-  const daysInMonth = new Date(
-    now.getFullYear(),
-    now.getMonth() + 1,
-    0
-  ).getDate();
-
-  if (currentDay <= 0) return totalExpense;
-
-  return Math.round((totalExpense / currentDay) * daysInMonth);
-};
-
-const calculateDailySafeLimit = (totalIncome: number, totalExpense: number) => {
-  const now = new Date();
-
-  const daysInMonth = new Date(
-    now.getFullYear(),
-    now.getMonth() + 1,
-    0
-  ).getDate();
-
-  const remainingDays = Math.max(daysInMonth - now.getDate() + 1, 1);
-  const remainingMoney = totalIncome - totalExpense;
-
-  if (remainingMoney <= 0) return 0;
-
-  return Math.round(remainingMoney / remainingDays);
-};
-
-const calculateFinancialScore = (
-  totalIncome: number,
-  totalExpense: number,
-  forecastExpense: number,
-  budgetStatuses: MonthlyReportBudgetStatus[],
-  goalStatuses: MonthlyReportGoalStatus[]
-) => {
-  let score = 50;
-
-  if (totalIncome > totalExpense) score += 20;
-  else score -= 20;
-
-  if (totalIncome > 0 && forecastExpense <= totalIncome) score += 15;
-  else if (totalIncome > 0) score -= 15;
-
-  const savingRate =
-    totalIncome > 0 ? ((totalIncome - totalExpense) / totalIncome) * 100 : 0;
-
-  if (savingRate >= 20) score += 10;
-  else if (savingRate < 5) score -= 10;
-
-  const exceededBudgets = budgetStatuses.filter(
-    (budget) => budget.status === 'exceeded'
-  ).length;
-
-  if (budgetStatuses.length > 0 && exceededBudgets === 0) score += 10;
-  if (exceededBudgets > 0) score -= 10;
-
-  const hasActiveGoals = goalStatuses.some((goal) => goal.progress < 100);
-  if (hasActiveGoals) score += 5;
-
-  return Math.max(0, Math.min(100, Math.round(score)));
-};
-
-const getFinancialScoreLabel = (score: number) => {
-  if (score >= 80) return 'Отличное финансовое состояние';
-  if (score >= 60) return 'Хорошее финансовое состояние';
-  if (score >= 40) return 'Среднее финансовое состояние';
-  return 'Высокий риск перерасхода';
 };
 
 const buildConclusion = (
@@ -213,8 +166,15 @@ const buildConclusion = (
 const buildRecommendation = (
   topExpenseCategories: MonthlyReportCategory[],
   budgetStatuses: MonthlyReportBudgetStatus[],
-  goalStatuses: MonthlyReportGoalStatus[]
+  goalStatuses: MonthlyReportGoalStatus[],
+  insights: AiInsight[]
 ) => {
+  const highInsight = insights.find((insight) => insight.severity === 'high');
+
+  if (highInsight) {
+    return highInsight.message;
+  }
+
   const exceededBudget = budgetStatuses.find((budget) => budget.status === 'exceeded');
 
   if (exceededBudget) {
@@ -224,16 +184,16 @@ const buildRecommendation = (
   const topCategory = topExpenseCategories[0];
 
   if (topCategory) {
-    return `Самая крупная категория расходов — «${topCategory.name}» (${formatKzt(topCategory.amount)}). Попробуйте снизить ее на 10–15%.`;
+    return `Самая крупная категория расходов — «${topCategory.name}» (${formatKzt(topCategory.amount)}). Попробуйте снизить её на 10–15%.`;
   }
 
   const activeGoal = goalStatuses.find((goal) => goal.progress < 100);
 
   if (activeGoal) {
-    return `Есть активная цель «${activeGoal.title}». Направляйте часть свободного остатка на ее достижение.`;
+    return `Есть активная цель «${activeGoal.title}». Направляйте часть свободного остатка на её достижение.`;
   }
 
-  return 'Продолжайте регулярно фиксировать операции, чтобы отчет был точнее.';
+  return 'Продолжайте регулярно фиксировать операции, чтобы отчёт был точнее.';
 };
 
 export const loadMonthlyReport = async (
@@ -241,13 +201,14 @@ export const loadMonthlyReport = async (
 ): Promise<MonthlyReportData | null> => {
   if (!userId) return null;
 
-  const { startIso, endIso, periodName } = getCurrentMonthRange();
+  const { start, end, startIso, endIso, periodName } = getCurrentMonthRange();
 
   const [
     transactionsResult,
     categoriesResult,
     budgetsResult,
     goalsResult,
+    subscriptionsResult,
   ] = await Promise.all([
     supabase
       .from('transactions')
@@ -271,6 +232,12 @@ export const loadMonthlyReport = async (
       .from('goals')
       .select('id, title, target_amount, current_amount, deadline')
       .eq('user_id', userId),
+
+    supabase
+      .from('recurring_payments')
+      .select('id, title, amount, next_payment_date, is_active')
+      .eq('user_id', userId)
+      .eq('is_active', true),
   ]);
 
   if (transactionsResult.error) {
@@ -290,133 +257,66 @@ export const loadMonthlyReport = async (
     console.error('Ошибка загрузки целей для отчета:', goalsResult.error);
   }
 
-  const transactions = transactionsResult.data || [];
-  const categories = categoriesResult.data || [];
-  const budgets = budgetsResult.data || [];
-  const goals = goalsResult.data || [];
+  if (subscriptionsResult.error) {
+    console.error('Ошибка загрузки подписок для отчета:', subscriptionsResult.error);
+  }
 
-  const incomeTransactions = transactions.filter((tx) => tx.type === 'income');
-  const expenseTransactions = transactions.filter((tx) => tx.type === 'expense');
+  const transactions = ((transactionsResult.data || []).filter(Boolean)) as FinanceTransaction[];
+  const categories = ((categoriesResult.data || []).filter(Boolean)) as FinanceCategory[];
+  const budgets = ((budgetsResult.data || []).filter(Boolean)) as FinanceBudget[];
+  const goals = ((goalsResult.data || []).filter(Boolean)) as FinanceGoal[];
+  const subscriptions = ((subscriptionsResult.data || []).filter(Boolean)) as FinanceSubscription[];
 
-  const totalIncome = incomeTransactions.reduce(
-    (sum, tx) => sum + safeNumber(tx.amount),
-    0
-  );
-
-  const totalExpense = expenseTransactions.reduce(
-    (sum, tx) => sum + safeNumber(tx.amount),
-    0
-  );
-
-  const balance = totalIncome - totalExpense;
-  const expensePercent =
-    totalIncome > 0 ? Math.round((totalExpense / totalIncome) * 100) : 0;
-
-  const forecastExpense = calculateForecastExpense(totalExpense);
-
-  const now = new Date();
-  const dailyAverageExpense =
-    now.getDate() > 0 ? Math.round(totalExpense / now.getDate()) : totalExpense;
-
-  const dailySafeLimit = calculateDailySafeLimit(totalIncome, totalExpense);
-
-  const topExpenseCategories = groupByCategory(transactions, 'expense');
-  const topIncomeCategories = groupByCategory(transactions, 'income');
-
-  const spentByCategoryId: Record<string, number> = {};
-
-  expenseTransactions.forEach((tx: any) => {
-    const categoryId = tx.category_id;
-
-    if (!categoryId) return;
-
-    spentByCategoryId[categoryId] =
-      (spentByCategoryId[categoryId] || 0) + safeNumber(tx.amount);
+  const intelligence = buildFinanceIntelligence({
+    transactions,
+    categories,
+    budgets,
+    goals,
+    subscriptions,
+    periodStart: start,
+    periodEnd: end,
   });
 
-  const budgetStatuses: MonthlyReportBudgetStatus[] = budgets.map((budget: any) => {
-    const category = categories.find((item: any) => item.id === budget.category_id);
-    const spentAmount = spentByCategoryId[budget.category_id] || 0;
-    const limitAmount = safeNumber(budget.limit_amount);
-    const percent =
-      limitAmount > 0 ? Math.round((spentAmount / limitAmount) * 100) : 0;
-
-    let status: MonthlyReportBudgetStatus['status'] = 'normal';
-
-    if (percent >= 100) status = 'exceeded';
-    else if (percent >= 80) status = 'warning';
-
-    return {
-      categoryId: budget.category_id,
-      categoryName: category?.name || 'Категория',
-      limitAmount,
-      spentAmount,
-      percent,
-      remainingAmount: Math.max(limitAmount - spentAmount, 0),
-      status,
-    };
-  });
-
-  const goalStatuses: MonthlyReportGoalStatus[] = goals.map((goal: any) => {
-    const targetAmount = safeNumber(goal.target_amount);
-    const currentAmount = safeNumber(goal.current_amount);
-    const progress =
-      targetAmount > 0 ? Math.min(Math.round((currentAmount / targetAmount) * 100), 100) : 0;
-
-    return {
-      id: goal.id,
-      title: goal.title,
-      targetAmount,
-      currentAmount,
-      progress,
-      remainingAmount: Math.max(targetAmount - currentAmount, 0),
-      deadline: goal.deadline || null,
-    };
-  });
-
-  const financialScore = calculateFinancialScore(
-    totalIncome,
-    totalExpense,
-    forecastExpense,
-    budgetStatuses,
-    goalStatuses
-  );
-
-  const financialScoreLabel = getFinancialScoreLabel(financialScore);
+  const topIncomeCategories = groupByCategory(transactions, categories, 'income');
 
   const conclusion = buildConclusion(
-    totalIncome,
-    totalExpense,
-    expensePercent,
-    forecastExpense
+    intelligence.totalIncome,
+    intelligence.totalExpense,
+    intelligence.expensePercent,
+    intelligence.forecastExpense
   );
 
   const recommendation = buildRecommendation(
-    topExpenseCategories,
-    budgetStatuses,
-    goalStatuses
+    intelligence.topExpenseCategories,
+    intelligence.budgetStatuses,
+    intelligence.goalStatuses,
+    intelligence.insights
   );
 
   return {
     periodName,
     startIso,
     endIso,
-    totalIncome,
-    totalExpense,
-    balance,
-    expensePercent,
-    forecastExpense,
-    dailyAverageExpense,
-    dailySafeLimit,
-    financialScore,
-    financialScoreLabel,
-    topExpenseCategories,
+    totalIncome: intelligence.totalIncome,
+    totalExpense: intelligence.totalExpense,
+    balance: intelligence.balance,
+    expensePercent: intelligence.expensePercent,
+    savingRate: intelligence.savingRate,
+    forecastExpense: intelligence.forecastExpense,
+    dailyAverageExpense: intelligence.averageDailyExpense,
+    dailySafeLimit: intelligence.dailySafeLimit,
+    financialScore: intelligence.financialScore,
+    financialScoreLabel: intelligence.financialScoreLabel,
+    scoreFactors: intelligence.scoreFactors,
+    topExpenseCategories: intelligence.topExpenseCategories,
     topIncomeCategories,
-    budgetStatuses,
-    goalStatuses,
-    transactionsCount: transactions.length,
-    incomeTransactionsCount: incomeTransactions.length,
-    expenseTransactionsCount: expenseTransactions.length,
+    budgetStatuses: intelligence.budgetStatuses,
+    goalStatuses: intelligence.goalStatuses,
+    anomalies: intelligence.anomalies,
+    insights: intelligence.insights,
+    transactionsCount: intelligence.transactionsCount,
+    incomeTransactionsCount: intelligence.incomeTransactionsCount,
+    expenseTransactionsCount: intelligence.expenseTransactionsCount,
     conclusion,
     recommendation,
   };
@@ -433,6 +333,29 @@ export const buildPlainTextMonthlyReport = (report: MonthlyReportData) => {
           )
           .join('\n')
       : 'Нет расходов по категориям.';
+
+  const factors =
+    report.scoreFactors.length > 0
+      ? report.scoreFactors
+          .map((item) => `${item.impact > 0 ? '+' : ''}${item.impact}: ${item.title}`)
+          .join('\n')
+      : 'Недостаточно факторов для объяснения рейтинга.';
+
+  const anomalies =
+    report.anomalies.length > 0
+      ? report.anomalies
+          .slice(0, 5)
+          .map((item, index) => `${index + 1}. ${item.title}: ${formatKzt(item.amount)}`)
+          .join('\n')
+      : 'Аномальные расходы не обнаружены.';
+
+  const insights =
+    report.insights.length > 0
+      ? report.insights
+          .slice(0, 5)
+          .map((item, index) => `${index + 1}. ${item.title}: ${item.message}`)
+          .join('\n')
+      : 'Персональные инсайты пока не сформированы.';
 
   const budgets =
     report.budgetStatuses.length > 0
@@ -465,10 +388,19 @@ export const buildPlainTextMonthlyReport = (report: MonthlyReportData) => {
     `Доля расходов от дохода: ${report.expensePercent}%`,
     `Прогноз расходов до конца месяца: ${formatKzt(report.forecastExpense)}`,
     `Безопасный дневной лимит: ${formatKzt(report.dailySafeLimit)}`,
-    `Финансовый рейтинг: ${report.financialScore}/100 — ${report.financialScoreLabel}`,
+    `Финансовое состояние: ${report.financialScore}/100 — ${report.financialScoreLabel}`,
+    '',
+    'Почему такой рейтинг:',
+    factors,
     '',
     'Топ расходов:',
     topExpenses,
+    '',
+    'Аномальные расходы:',
+    anomalies,
+    '',
+    'Что важно сейчас:',
+    insights,
     '',
     'Бюджеты:',
     budgets,

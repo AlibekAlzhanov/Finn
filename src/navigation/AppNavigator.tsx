@@ -12,6 +12,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import MainScreen from '../screens/MainScreen';
 import StatsScreen from '../screens/StatsScreen';
+import AddActionScreen from '../screens/AddActionScreen';
+import PlanScreen from '../screens/PlanScreen';
 import AccountsScreen from '../screens/AccountsScreen';
 import ProfileScreen from '../screens/ProfileScreen';
 import HistoryScreen from '../screens/HistoryScreen';
@@ -23,6 +25,7 @@ import VoiceActionReviewScreen from '../screens/VoiceActionReviewScreen';
 import BudgetsScreen from '../screens/BudgetsScreen';
 import GoalsScreen from '../screens/GoalsScreen';
 import AiChatScreen from '../screens/AiChatScreen';
+import AiInsightsScreen from '../screens/AiInsightsScreen';
 import RecurringPaymentsScreen from '../screens/RecurringPaymentsScreen';
 import MonthlyReportScreen from '../screens/MonthlyReportScreen';
 import ServicesScreen from '../screens/ServicesScreen';
@@ -34,13 +37,14 @@ import AppIcon, { IconName } from '../components/ui/AppIcon';
 
 const Stack = createNativeStackNavigator();
 
-type RootTabKey = 'Main' | 'Stats' | 'Budgets' | 'Services' | 'Profile';
+type RootTabKey = 'Main' | 'Stats' | 'Add' | 'Plan' | 'Profile';
 
 type RootTab = {
   key: RootTabKey;
   label: string;
   icon: IconName;
   component: React.ComponentType<any>;
+  center?: boolean;
 };
 
 const rootTabs: RootTab[] = [
@@ -57,16 +61,17 @@ const rootTabs: RootTab[] = [
     component: StatsScreen,
   },
   {
-    key: 'Budgets',
-    label: 'Бюджет',
-    icon: 'budget',
-    component: BudgetsScreen,
+    key: 'Add',
+    label: 'Добавить',
+    icon: 'plus',
+    component: AddActionScreen,
+    center: true,
   },
   {
-    key: 'Services',
-    label: 'Сервисы',
-    icon: 'category',
-    component: ServicesScreen,
+    key: 'Plan',
+    label: 'План',
+    icon: 'target',
+    component: PlanScreen,
   },
   {
     key: 'Profile',
@@ -87,6 +92,24 @@ function AppDock({
     <View style={styles.dock}>
       {rootTabs.map((tab) => {
         const isActive = tab.key === activeTab;
+
+        if (tab.center) {
+          return (
+            <TouchableOpacity
+              key={tab.key}
+              activeOpacity={0.88}
+              style={styles.centerDockItem}
+              onPress={() => onChangeTab(tab.key)}
+            >
+              <View style={[styles.centerButton, isActive && styles.centerButtonActive]}>
+                <AppIcon name={tab.icon} size={25} color="#FFFFFF" />
+              </View>
+              <Text style={[styles.centerDockLabel, isActive && styles.dockLabelActive]}>
+                {tab.label}
+              </Text>
+            </TouchableOpacity>
+          );
+        }
 
         return (
           <TouchableOpacity
@@ -180,6 +203,8 @@ export default function AppNavigator() {
           <Stack.Screen name="Root" component={RootShell} />
 
           <Stack.Screen name="Stats" component={StatsScreen} />
+          <Stack.Screen name="AddAction" component={AddActionScreen} />
+          <Stack.Screen name="Plan" component={PlanScreen} />
           <Stack.Screen name="Budgets" component={BudgetsScreen} />
           <Stack.Screen name="Accounts" component={AccountsScreen} />
           <Stack.Screen name="Profile" component={ProfileScreen} />
@@ -192,6 +217,7 @@ export default function AppNavigator() {
           <Stack.Screen name="VoiceActionReview" component={VoiceActionReviewScreen} />
           <Stack.Screen name="Goals" component={GoalsScreen} />
           <Stack.Screen name="AiChat" component={AiChatScreen} />
+          <Stack.Screen name="AiInsights" component={AiInsightsScreen} />
           <Stack.Screen name="RecurringPayments" component={RecurringPaymentsScreen} />
           <Stack.Screen name="MonthlyReport" component={MonthlyReportScreen} />
         </>
@@ -227,7 +253,7 @@ const styles = StyleSheet.create({
   },
 
   dock: {
-    height: 72,
+    height: 76,
     backgroundColor: colors.surface,
     borderRadius: radius.xl,
     paddingHorizontal: 6,
@@ -242,7 +268,7 @@ const styles = StyleSheet.create({
 
   dockItem: {
     flex: 1,
-    height: 58,
+    height: 60,
     alignItems: 'center',
     justifyContent: 'center',
     borderRadius: radius.lg,
@@ -261,5 +287,33 @@ const styles = StyleSheet.create({
 
   dockLabelActive: {
     color: colors.primary,
+  },
+
+  centerDockItem: {
+    flex: 1,
+    height: 66,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  centerButton: {
+    width: 48,
+    height: 48,
+    borderRadius: 18,
+    backgroundColor: colors.dark,
+    alignItems: 'center',
+    justifyContent: 'center',
+    ...shadow.elevated,
+  },
+
+  centerButtonActive: {
+    backgroundColor: colors.primary,
+  },
+
+  centerDockLabel: {
+    marginTop: 2,
+    fontSize: 9.5,
+    color: colors.inkMuted,
+    fontWeight: '900',
   },
 });
