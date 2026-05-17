@@ -287,13 +287,6 @@ export default function AddActionScreen() {
             </TouchableOpacity>
           ))}
         </View>
-
-        <View style={styles.noteCard}>
-          <Text style={styles.noteTitle}>Подсказка</Text>
-          <Text style={styles.noteText}>
-            Чем проще команда, тем точнее AI распознаёт операцию. Например: “такси 1700” или “зарплата 250000”.
-          </Text>
-        </View>
       </ScrollView>
     </View>
   );
@@ -394,11 +387,4 @@ const styles = StyleSheet.create({
   },
   badgeText: { color: colors.primary, fontSize: 10, fontWeight: '900' },
 
-  noteCard: {
-    backgroundColor: colors.primarySoft,
-    borderRadius: radius.xl,
-    padding: 16,
-  },
-  noteTitle: { color: colors.primaryDark, fontSize: 16, fontWeight: '900', marginBottom: 6 },
-  noteText: { color: colors.primaryDark, fontSize: 13, lineHeight: 19, fontWeight: '700' },
 });

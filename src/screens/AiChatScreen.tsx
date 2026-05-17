@@ -12,6 +12,7 @@ import {
   Platform,
 } from 'react-native';
 import { useFocusEffect, useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useAuthStore } from '../store/useAuthStore';
 import { askFinanceAi } from '../services/aiChatService';
@@ -39,12 +40,11 @@ const quickQuestions = [
   'Что сделать до конца месяца?',
 ];
 
-const createMessageId = () => {
-  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-};
+const createMessageId = () => `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
 export default function AiChatScreen() {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
   const { user } = useAuthStore();
   const scrollRef = useRef<ScrollView | null>(null);
 
@@ -91,6 +91,8 @@ export default function AiChatScreen() {
   );
 
   const intelligence = data?.intelligence;
+  const inputBottom = Math.max(insets.bottom, 12);
+  const inputPanelHeight = 88 + inputBottom;
 
   const sendQuestion = async (question?: string) => {
     const text = (question || input).trim();
@@ -109,9 +111,7 @@ export default function AiChatScreen() {
     setMessages((current) => [...current, userMessage]);
     setSending(true);
 
-    setTimeout(() => {
-      scrollRef.current?.scrollToEnd({ animated: true });
-    }, 80);
+    setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 80);
 
     try {
       const answer = await askFinanceAi({
@@ -122,13 +122,14 @@ export default function AiChatScreen() {
         mode: 'chat',
       });
 
-      const assistantMessage: ChatMessage = {
-        id: createMessageId(),
-        role: 'assistant',
-        text: answer,
-      };
-
-      setMessages((current) => [...current, assistantMessage]);
+      setMessages((current) => [
+        ...current,
+        {
+          id: createMessageId(),
+          role: 'assistant',
+          text: answer,
+        },
+      ]);
     } catch (error) {
       console.error('Ошибка отправки вопроса AI:', error);
 
@@ -142,10 +143,7 @@ export default function AiChatScreen() {
       ]);
     } finally {
       setSending(false);
-
-      setTimeout(() => {
-        scrollRef.current?.scrollToEnd({ animated: true });
-      }, 120);
+      setTimeout(() => scrollRef.current?.scrollToEnd({ animated: true }), 120);
     }
   };
 
@@ -183,7 +181,7 @@ export default function AiChatScreen() {
     <View style={styles.container}>
       <ScrollView
         ref={scrollRef}
-        contentContainerStyle={styles.content}
+        contentContainerStyle={[styles.content, { paddingBottom: inputPanelHeight }]}
         keyboardShouldPersistTaps="handled"
       >
         <ScreenHeader
@@ -246,7 +244,7 @@ export default function AiChatScreen() {
         </View>
       </ScrollView>
 
-      <View style={styles.inputPanel}>
+      <View style={[styles.inputPanel, { bottom: inputBottom }]}>
         <TextInput
           style={styles.input}
           placeholder="Спроси: что мне сократить?"
@@ -280,12 +278,12 @@ export default function AiChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, paddingBottom: 120 },
+  content: { paddingHorizontal: 20 },
 
   emptyScreen: {
     flex: 1,
     backgroundColor: colors.background,
-    padding: 20,
+    paddingHorizontal: 20,
   },
 
   loadingContainer: {
@@ -378,7 +376,6 @@ const styles = StyleSheet.create({
     position: 'absolute',
     left: 14,
     right: 14,
-    bottom: 12,
     backgroundColor: colors.surface,
     borderRadius: radius.xl,
     borderWidth: 1,

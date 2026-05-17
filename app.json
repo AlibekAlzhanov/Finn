@@ -2,6 +2,7 @@
   "expo": {
     "name": "FinBuddy",
     "slug": "FinBuddy",
+    "scheme": "finbuddy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -31,7 +32,8 @@
     "plugins": [
       "expo-sqlite",
       "@react-native-community/datetimepicker",
-      "expo-audio"
+      "expo-audio",
+      "expo-web-browser"
     ],
     "extra": {
       "eas": {

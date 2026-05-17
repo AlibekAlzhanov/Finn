@@ -153,24 +153,55 @@ export default function AiReviewScreen() {
     }
   };
 
-  const findCategoryId = (name: string, type: TxType) => {
-    if (type === 'transfer') return '';
+  const findCategoryById = (id: string, type: TxType) => {
+    if (!id || type === 'transfer') return null;
+    return categories.find((category) => category.id === id && category.type === type) || null;
+  };
+
+  const findCategoryByName = (name: string, type: TxType) => {
+    if (type === 'transfer') return null;
 
     const cleanName = normalize(name);
-
-    if (!cleanName) return '';
+    if (!cleanName) return null;
 
     const source = categories.filter((category) => category.type === type);
 
     const exact = source.find((category) => normalize(category.name) === cleanName);
-    if (exact) return exact.id;
+    if (exact) return exact;
 
     const included = source.find((category) => {
       const categoryName = normalize(category.name);
       return categoryName.includes(cleanName) || cleanName.includes(categoryName);
     });
 
-    return included?.id || '';
+    return included || null;
+  };
+
+  const resolveCategory = (item: any, type: TxType) => {
+    if (type === 'transfer') {
+      return {
+        categoryId: '',
+        categoryName: '',
+      };
+    }
+
+    const rawCategoryId = String(item?.category_id || item?.categoryId || '');
+    const rawCategoryName = String(
+      item?.categoryName ||
+        item?.category_name ||
+        item?.category ||
+        item?.name ||
+        ''
+    );
+
+    const byId = findCategoryById(rawCategoryId, type);
+    const byName = findCategoryByName(rawCategoryName, type);
+    const selected = byId || byName;
+
+    return {
+      categoryId: selected?.id || '',
+      categoryName: selected?.name || rawCategoryName,
+    };
   };
 
   const buildRows = (items: any[]): ReviewRow[] => {
@@ -204,14 +235,6 @@ export default function AiReviewScreen() {
             ? 'transfer'
             : 'expense';
 
-      const categoryName = String(
-        item?.categoryName ||
-          item?.category_name ||
-          item?.category ||
-          item?.name ||
-          ''
-      );
-
       const amountValue =
         item?.amount ??
         item?.sum ??
@@ -225,6 +248,8 @@ export default function AiReviewScreen() {
         item?.original_currency ||
         detectCurrencyCodeFromText(`${originalText} ${item?.note || ''} ${item?.description || ''}`);
 
+      const category = resolveCategory(item, type);
+
       return {
         localId: `ai-row-${index}-${Date.now()}`,
         type,
@@ -233,9 +258,9 @@ export default function AiReviewScreen() {
         currencyDetectedBy: item?.currency_detected_by || 'text',
         accountId: firstAccount?.id || '',
         toAccountId: secondAccount?.id || '',
-        categoryId: findCategoryId(categoryName, type),
-        categoryName,
-        note: String(item?.note || item?.description || item?.title || categoryName || originalText || ''),
+        categoryId: category.categoryId,
+        categoryName: category.categoryName,
+        note: String(item?.note || item?.description || item?.title || category.categoryName || originalText || ''),
         tagsText: Array.isArray(item?.tags) ? item.tags.join(', ') : String(item?.tags || ''),
         ratePreview: null,
       };
@@ -285,9 +310,9 @@ export default function AiReviewScreen() {
 
     if (!cleanName) return '';
 
-    const existingId = findCategoryId(cleanName, row.type);
+    const existing = findCategoryByName(cleanName, row.type);
 
-    if (existingId) return existingId;
+    if (existing) return existing.id;
 
     const { data, error } = await supabase
       .from('categories')
@@ -313,13 +338,8 @@ export default function AiReviewScreen() {
       for (const row of rows) {
         const amount = safeNumber(row.amountText);
 
-        if (amount <= 0) {
-          throw new Error('В одной из операций не указана сумма.');
-        }
-
-        if (!row.accountId) {
-          throw new Error('В одной из операций не выбран счет.');
-        }
+        if (amount <= 0) throw new Error('В одной из операций не указана сумма.');
+        if (!row.accountId) throw new Error('В одной из операций не выбран счет.');
 
         if (row.type === 'transfer' && !row.toAccountId) {
           throw new Error('В переводе не выбран счет получения.');
@@ -332,7 +352,7 @@ export default function AiReviewScreen() {
         const categoryId = await createCategoryIfNeeded(row);
 
         if (row.type !== 'transfer' && !categoryId) {
-          throw new Error('В одной из операций не выбрана категория.');
+          throw new Error('В одной из операций не выбрана или не указана категория.');
         }
 
         const currencyPayload = await prepareCurrencyTransactionPayload({
@@ -356,7 +376,7 @@ export default function AiReviewScreen() {
         if (error) throw error;
       }
 
-      Alert.alert('Готово', 'AI-операции сохранены с учетом валют.', [
+      Alert.alert('Готово', 'AI-операции сохранены с учетом валют и категорий.', [
         {
           text: 'OK',
           onPress: () => navigation.navigate('Root'),
@@ -382,12 +402,22 @@ export default function AiReviewScreen() {
             <TouchableOpacity
               key={`${row.localId}-${type}`}
               style={[styles.typeOption, isActive && styles.typeOptionActive]}
-              onPress={() =>
+              onPress={() => {
+                const category = resolveCategory(
+                  {
+                    category_id: row.categoryId,
+                    category_name: row.categoryName,
+                    note: row.note,
+                  },
+                  type
+                );
+
                 updateRow(row.localId, {
                   type,
-                  categoryId: type === 'transfer' ? '' : findCategoryId(row.categoryName, type),
-                })
-              }
+                  categoryId: category.categoryId,
+                  categoryName: category.categoryName,
+                });
+              }}
             >
               <Text style={[styles.typeText, isActive && styles.typeTextActive]}>
                 {type === 'expense' ? 'Расход' : type === 'income' ? 'Доход' : 'Перевод'}
@@ -457,6 +487,8 @@ export default function AiReviewScreen() {
     if (row.type === 'transfer') return null;
 
     const source = categories.filter((category) => category.type === row.type);
+    const hasSelectedExisting = !!row.categoryId;
+    const hasSuggestedNew = !row.categoryId && row.categoryName.trim().length > 0;
 
     return (
       <>
@@ -483,13 +515,44 @@ export default function AiReviewScreen() {
               </TouchableOpacity>
             );
           })}
+
+          {!!row.categoryName.trim() && (
+            <TouchableOpacity
+              style={[styles.chip, hasSuggestedNew && styles.newCategoryChip]}
+              onPress={() =>
+                updateRow(row.localId, {
+                  categoryId: '',
+                  categoryName: row.categoryName.trim(),
+                })
+              }
+            >
+              <Text style={[styles.chipText, hasSuggestedNew && styles.newCategoryText]}>
+                + {row.categoryName.trim()}
+              </Text>
+            </TouchableOpacity>
+          )}
         </ScrollView>
+
+        {hasSelectedExisting && (
+          <Text style={styles.categoryHint}>Категория выбрана из существующих.</Text>
+        )}
+
+        {hasSuggestedNew && (
+          <Text style={styles.newCategoryHint}>
+            Такой категории ещё нет. При сохранении FinBuddy создаст её автоматически.
+          </Text>
+        )}
 
         <Text style={styles.inputLabel}>Новая категория / название из AI</Text>
         <TextInput
           style={styles.input}
           value={row.categoryName}
-          onChangeText={(value) => updateRow(row.localId, { categoryName: value })}
+          onChangeText={(value) =>
+            updateRow(row.localId, {
+              categoryName: value,
+              categoryId: findCategoryByName(value, row.type)?.id || '',
+            })
+          }
           placeholder="Например: Кино"
           placeholderTextColor={colors.inkMuted}
         />
@@ -511,7 +574,7 @@ export default function AiReviewScreen() {
       <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
         <ScreenHeader
           title="AI-проверка"
-          subtitle="Перед сохранением проверь валюту и курс"
+          subtitle="Перед сохранением проверь валюту, категорию и курс"
           back
           icon="ai"
         />
@@ -522,7 +585,7 @@ export default function AiReviewScreen() {
             {formatCurrencyAmount(totalBaseAmount, BASE_CURRENCY)}
           </Text>
           <Text style={styles.heroText}>
-            В базу сохраняется сумма в KZT, а исходная валюта остается в истории операции.
+            В базу сохраняется сумма в KZT, а исходная валюта и выбранная категория остаются в истории операции.
           </Text>
         </View>
 
@@ -610,7 +673,7 @@ export default function AiReviewScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: colors.background },
-  content: { padding: 20, paddingBottom: 36 },
+  content: { paddingHorizontal: 20, paddingBottom: 48 },
   loadingContainer: { flex: 1, backgroundColor: colors.background, alignItems: 'center', justifyContent: 'center' },
   loadingText: { color: colors.inkMuted, fontSize: 14, fontWeight: '700', marginTop: 12 },
   heroCard: { backgroundColor: colors.dark, borderRadius: radius.xxl, padding: 22, marginBottom: 14, ...shadow.elevated },
@@ -632,6 +695,10 @@ const styles = StyleSheet.create({
   chipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   chipText: { color: colors.inkMuted, fontSize: 13, fontWeight: '900' },
   chipTextActive: { color: '#FFFFFF' },
+  newCategoryChip: { backgroundColor: colors.amberSoft, borderColor: colors.amber },
+  newCategoryText: { color: colors.amber },
+  categoryHint: { color: colors.mint, fontSize: 11, fontWeight: '800', marginTop: -8, marginBottom: 12 },
+  newCategoryHint: { color: colors.amber, fontSize: 11, fontWeight: '800', marginTop: -8, marginBottom: 12 },
   currencyChip: { backgroundColor: colors.surfaceAlt, borderRadius: radius.lg, paddingHorizontal: 13, paddingVertical: 10, marginRight: 8, borderWidth: 1, borderColor: colors.border, minWidth: 74, alignItems: 'center' },
   currencyChipActive: { backgroundColor: colors.primary, borderColor: colors.primary },
   currencySymbol: { color: colors.ink, fontSize: 18, fontWeight: '900' },

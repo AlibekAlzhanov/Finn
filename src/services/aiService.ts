@@ -1,5 +1,7 @@
+import * as FileSystem from 'expo-file-system/legacy';
+
 import { supabase } from './supabase';
-import { FINANCE_REGION, KAZAKHSTAN_AI_RULES, formatKzt } from './financeConfig';
+import { formatKzt } from './financeConfig';
 
 type Account = {
   id: string;
@@ -18,102 +20,202 @@ type ParsedTransaction = {
   account_id: string | null;
   to_account_id?: string | null;
   category_id: string | null;
+  category_name?: string | null;
   note: string;
   tags: string;
 };
 
-const GROQ_CHAT_URL = 'https://api.groq.com/openai/v1/chat/completions';
-const GROQ_TRANSCRIPTION_URL = 'https://api.groq.com/openai/v1/audio/transcriptions';
-
-const CHAT_MODEL = 'llama-3.3-70b-versatile';
-const WHISPER_MODEL = 'whisper-large-v3';
-
-const getGroqKey = () => {
-  const key = process.env.EXPO_PUBLIC_GROQ_API_KEY?.trim();
-
-  if (!key || key.includes('ТВОЙ_') || key.includes('YOUR_')) {
-    return null;
-  }
-
-  return key;
+type CategoryRule = {
+  canonical: string;
+  type: 'expense' | 'income';
+  priority: number;
+  keywords: string[];
 };
 
+const EXPENSE_RULES: CategoryRule[] = [
+  {
+    canonical: 'Подписки',
+    type: 'expense',
+    priority: 120,
+    keywords: [
+      'подписк',
+      'subscription',
+      'яндекс плюс',
+      'yandex plus',
+      'ya plus',
+      'netflix',
+      'spotify',
+      'icloud',
+      'кинопоиск',
+      'youtube premium',
+      'apple music',
+      'chatgpt',
+      'openai',
+      'google one',
+      'telegram premium',
+    ],
+  },
+  {
+    canonical: 'Кафе и рестораны',
+    type: 'expense',
+    priority: 95,
+    keywords: [
+      'кофе',
+      'кафе',
+      'ресторан',
+      'обед',
+      'ужин',
+      'завтрак',
+      'донер',
+      'шаурма',
+      'бургер',
+      'пицца',
+      'суши',
+      'kfc',
+      'magnum cafe',
+      'starbucks',
+      'старбакс',
+    ],
+  },
+  {
+    canonical: 'Продукты',
+    type: 'expense',
+    priority: 90,
+    keywords: [
+      'продукт',
+      'еда домой',
+      'супермаркет',
+      'магазин',
+      'magnum',
+      'small',
+      'анвар',
+      'овощ',
+      'фрукт',
+      'мясо',
+      'хлеб',
+      'молоко',
+    ],
+  },
+  {
+    canonical: 'Транспорт',
+    type: 'expense',
+    priority: 80,
+    keywords: [
+      'такси',
+      'яндекс go',
+      'yandex go',
+      'indrive',
+      'uber',
+      'автобус',
+      'метро',
+      'проезд',
+      'транспорт',
+      'бензин',
+      'заправка',
+      'парковка',
+    ],
+  },
+  {
+    canonical: 'Долг',
+    type: 'expense',
+    priority: 110,
+    keywords: [
+      'отдал долг',
+      'отдала долг',
+      'вернул долг',
+      'вернула долг',
+      'погасил долг',
+      'погасила долг',
+      'закрыл долг',
+      'закрыла долг',
+      'одолжил',
+      'одолжила',
+      'занял другу',
+    ],
+  },
+  {
+    canonical: 'Подарок',
+    type: 'expense',
+    priority: 90,
+    keywords: ['купил подарок', 'купила подарок', 'подарил', 'подарила', 'подарки'],
+  },
+  {
+    canonical: 'Одежда',
+    type: 'expense',
+    priority: 70,
+    keywords: ['одежд', 'кроссов', 'футболк', 'куртка', 'брюки', 'джинсы', 'обувь', 'zara'],
+  },
+  {
+    canonical: 'Развлечения',
+    type: 'expense',
+    priority: 65,
+    keywords: ['кино', 'игра', 'развлеч', 'театр', 'концерт', 'караоке', 'боулинг', 'ps store'],
+  },
+  {
+    canonical: 'Здоровье',
+    type: 'expense',
+    priority: 65,
+    keywords: ['аптека', 'лекар', 'клиника', 'здоров', 'врач', 'стоматолог', 'анализ'],
+  },
+  {
+    canonical: 'Образование',
+    type: 'expense',
+    priority: 65,
+    keywords: ['учеб', 'курс', 'книга', 'университет', 'образование', 'udemy', 'coursera'],
+  },
+  {
+    canonical: 'Дом',
+    type: 'expense',
+    priority: 60,
+    keywords: ['дом', 'ремонт', 'быт', 'товары для дома', 'хоз', 'ikea', 'мебель'],
+  },
+];
+
+const INCOME_RULES: CategoryRule[] = [
+  {
+    canonical: 'Зарплата',
+    type: 'income',
+    priority: 100,
+    keywords: ['зарплат', 'аванс', 'премия', 'оклад'],
+  },
+  {
+    canonical: 'Подработка',
+    type: 'income',
+    priority: 90,
+    keywords: ['подработка', 'фриланс', 'проект', 'заказ', 'работа'],
+  },
+  {
+    canonical: 'Подарок',
+    type: 'income',
+    priority: 95,
+    keywords: ['подарили', 'подарок', 'подарил мне', 'мне подарили', 'gift', 'донат', 'презент'],
+  },
+  {
+    canonical: 'Долг',
+    type: 'income',
+    priority: 95,
+    keywords: ['отдали долг', 'вернули долг', 'мне вернули', 'вернули мне', 'возврат долга', 'долг вернули'],
+  },
+  {
+    canonical: 'Перевод',
+    type: 'income',
+    priority: 40,
+    keywords: ['перевод получил', 'поступил перевод', 'поступление'],
+  },
+];
+
 const safeNumber = (value: unknown) => {
-  const numberValue = Number(value);
+  const numberValue = Number(String(value ?? '').replace(',', '.'));
   return Number.isFinite(numberValue) ? numberValue : 0;
 };
 
-const extractJsonObject = (text: string) => {
-  try {
-    return JSON.parse(text);
-  } catch {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error('JSON объект не найден в ответе ИИ');
-    }
-
-    return JSON.parse(text.slice(start, end + 1));
-  }
-};
-
-const sanitizeCurrencyText = (text: string) => {
-  return text
-    .replace(/руб(лей|ля|ль|\.|)/gi, '₸')
-    .replace(/₽/g, '₸')
-    .replace(/RUB/gi, 'KZT');
-};
-
-const fetchGroqChat = async (
-  messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>,
-  options?: {
-    temperature?: number;
-    max_tokens?: number;
-    json?: boolean;
-  }
-) => {
-  const apiKey = getGroqKey();
-
-  if (!apiKey) {
-    throw new Error(
-      'EXPO_PUBLIC_GROQ_API_KEY не найден или указан неверно. Проверь .env.'
-    );
-  }
-
-  const response = await fetch(GROQ_CHAT_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: CHAT_MODEL,
-      messages,
-      temperature: options?.temperature ?? 0.2,
-      max_tokens: options?.max_tokens ?? 700,
-      ...(options?.json ? { response_format: { type: 'json_object' } } : {}),
-    }),
-  });
-
-  const rawText = await response.text();
-
-  if (!response.ok) {
-    console.error('Groq API Error Status:', response.status);
-    console.error('Groq API Error Body:', rawText);
-
-    throw new Error(`Groq API Error ${response.status}`);
-  }
-
-  const data = JSON.parse(rawText);
-  const content = data?.choices?.[0]?.message?.content;
-
-  if (!content) {
-    console.error('Пустой ответ Groq:', data);
-    throw new Error('Groq вернул пустой ответ');
-  }
-
-  return sanitizeCurrencyText(content.trim());
+const normalizeText = (value: unknown) => {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/ё/g, 'е')
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
 };
 
 const loadUserFinanceDictionaries = async (userId: string) => {
@@ -123,13 +225,8 @@ const loadUserFinanceDictionaries = async (userId: string) => {
       supabase.from('categories').select('id, name, type').eq('user_id', userId),
     ]);
 
-  if (accountsError) {
-    console.error('Ошибка загрузки счетов:', accountsError);
-  }
-
-  if (categoriesError) {
-    console.error('Ошибка загрузки категорий:', categoriesError);
-  }
+  if (accountsError) console.error('Ошибка загрузки счетов:', accountsError);
+  if (categoriesError) console.error('Ошибка загрузки категорий:', categoriesError);
 
   return {
     accounts: (accounts || []) as Account[],
@@ -137,61 +234,133 @@ const loadUserFinanceDictionaries = async (userId: string) => {
   };
 };
 
+const keywordMatches = (text: string, keyword: string) => {
+  const cleanText = normalizeText(text);
+  const cleanKeyword = normalizeText(keyword);
+  if (!cleanKeyword) return false;
+  return cleanText.includes(cleanKeyword);
+};
+
+const getStrongSemanticCategoryName = (
+  text: string,
+  type: 'expense' | 'income' | 'transfer'
+) => {
+  if (type === 'transfer') return null;
+
+  const rules = type === 'income' ? INCOME_RULES : EXPENSE_RULES;
+  const cleanText = normalizeText(text);
+
+  if (!cleanText) return null;
+
+  const scored = rules
+    .map((rule) => {
+      const matchCount = rule.keywords.filter((keyword) =>
+        keywordMatches(cleanText, keyword)
+      ).length;
+
+      return {
+        rule,
+        score: matchCount > 0 ? rule.priority + matchCount * 15 : 0,
+      };
+    })
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  return scored[0]?.rule.canonical || null;
+};
+
+const findCategoryByName = (
+  categoryName: string,
+  categories: Category[],
+  type: 'expense' | 'income' | 'transfer'
+) => {
+  if (type === 'transfer') return null;
+
+  const cleanName = normalizeText(categoryName);
+  if (!cleanName) return null;
+
+  const source = categories.filter((category) => category.type === type);
+
+  const exact = source.find((category) => normalizeText(category.name) === cleanName);
+  if (exact) return exact;
+
+  const included = source.find((category) => {
+    const existingName = normalizeText(category.name);
+    return existingName.includes(cleanName) || cleanName.includes(existingName);
+  });
+
+  return included || null;
+};
+
+const getSuggestedCategoryName = (
+  text: string,
+  type: 'expense' | 'income' | 'transfer'
+) => {
+  const strong = getStrongSemanticCategoryName(text, type);
+  if (strong) return strong;
+
+  if (type === 'income') return 'Доход';
+  if (type === 'transfer') return '';
+
+  const cleaned = text
+    .replace(/\d+(?:[.,]\d+)?/g, '')
+    .replace(/₸|тг|тенге|kzt|usd|eur|доллар|долларов|евро/gi, '')
+    .replace(/\b(купил|купила|оплатил|оплатила|заплатил|заплатила|потратил|потратила)\b/gi, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  return cleaned ? cleaned.slice(0, 32) : 'Новая категория';
+};
+
 const findCategoryByText = (
   text: string,
   categories: Category[],
   type: 'expense' | 'income' | 'transfer'
 ) => {
-  const lowerText = text.toLowerCase();
+  if (type === 'transfer') return null;
 
-  const typeCategories = categories.filter((category) => category.type === type);
+  const strongCategoryName = getStrongSemanticCategoryName(text, type);
 
-  const exactMatch = typeCategories.find((category) =>
-    lowerText.includes(category.name.toLowerCase())
-  );
-
-  if (exactMatch) return exactMatch;
-
-  const expenseRules: Array<{ keywords: string[]; names: string[] }> = [
-    {
-      keywords: ['magnum', 'small', 'анвар', 'продукт', 'еда', 'супермаркет', 'магазин'],
-      names: ['продукты', 'еда', 'питание'],
-    },
-    {
-      keywords: ['кофе', 'кафе', 'старбакс', 'starbucks', 'ресторан', 'обед', 'ужин'],
-      names: ['кафе', 'рестораны', 'еда', 'питание'],
-    },
-    {
-      keywords: ['такси', 'yandex', 'яндекс', 'indrive', 'автобус', 'транспорт', 'kaspi'],
-      names: ['транспорт', 'такси'],
-    },
-    {
-      keywords: ['кино', 'netflix', 'spotify', 'игра', 'развлеч'],
-      names: ['развлечения', 'подписки'],
-    },
-    {
-      keywords: ['аптека', 'лекар', 'клиника', 'здоров'],
-      names: ['здоровье', 'медицина'],
-    },
-    {
-      keywords: ['учеб', 'курс', 'книга', 'университет'],
-      names: ['обучение', 'образование'],
-    },
-  ];
-
-  for (const rule of expenseRules) {
-    const hasKeyword = rule.keywords.some((keyword) => lowerText.includes(keyword));
-
-    if (!hasKeyword) continue;
-
-    const category = typeCategories.find((item) =>
-      rule.names.some((name) => item.name.toLowerCase().includes(name))
-    );
-
-    if (category) return category;
+  if (strongCategoryName) {
+    const strongCategory = findCategoryByName(strongCategoryName, categories, type);
+    if (strongCategory) return strongCategory;
   }
 
-  return typeCategories[0] || categories[0] || null;
+  const suggestedName = getSuggestedCategoryName(text, type);
+  const bySuggestedName = findCategoryByName(suggestedName, categories, type);
+
+  if (bySuggestedName) return bySuggestedName;
+
+  const lowerText = normalizeText(text);
+  const source = categories.filter((category) => category.type === type);
+
+  const exactInText = source.find((category) =>
+    lowerText.includes(normalizeText(category.name))
+  );
+
+  return exactInText || null;
+};
+
+const inferTransactionType = (text: string): 'expense' | 'income' | 'transfer' => {
+  const normalizedText = normalizeText(text);
+
+  if (/перев[её]л|перевод|с одного счета|на другой счет|между счетами/.test(normalizedText)) {
+    return 'transfer';
+  }
+
+  if (/(^|\s)(я\s+)?(отдал|отдала|вернул|вернула|погасил|погасила|закрыл|закрыла)\s+долг/.test(normalizedText)) {
+    return 'expense';
+  }
+
+  if (
+    /зарплат|доход|получил|получила|поступил|поступление|аванс|премия|оклад|подарили|мне подарили|подарок|отдали долг|вернули долг|мне вернули|вернули мне|возврат долга/.test(
+      normalizedText
+    )
+  ) {
+    return 'income';
+  }
+
+  return 'expense';
 };
 
 const buildLocalParsedTransaction = (
@@ -199,44 +368,24 @@ const buildLocalParsedTransaction = (
   accounts: Account[],
   categories: Category[]
 ): ParsedTransaction[] => {
-  const normalizedText = text.toLowerCase();
-
-  const amountMatch = text
-    .replace(/\s/g, '')
-    .match(/(\d+(?:[.,]\d+)?)/);
-
+  const amountMatch = text.replace(/\s/g, '').match(/(\d+(?:[.,]\d+)?)/);
   const amount = amountMatch ? Number(amountMatch[1].replace(',', '.')) : 0;
 
-  if (!amount || amount <= 0) {
-    return [];
-  }
+  if (!amount || amount <= 0) return [];
 
-  const isIncome =
-    /зарплат|доход|получил|получила|поступил|поступление|аванс|премия/i.test(
-      normalizedText
-    );
-
-  const isTransfer =
-    /перев[её]л|перевод|с одного счета|на другой счет|между счетами/i.test(
-      normalizedText
-    );
-
-  const type: 'expense' | 'income' | 'transfer' = isTransfer
-    ? 'transfer'
-    : isIncome
-      ? 'income'
-      : 'expense';
+  const type = inferTransactionType(text);
 
   const account =
-    accounts.find((item) => normalizedText.includes(item.name.toLowerCase())) ||
+    accounts.find((item) => normalizeText(text).includes(normalizeText(item.name))) ||
     accounts[0] ||
     null;
 
   const category = findCategoryByText(text, categories, type);
+  const suggestedCategoryName = category?.name || getSuggestedCategoryName(text, type);
 
   const cleanNote = text
     .replace(/\d+(?:[.,]\d+)?/g, '')
-    .replace(/₸|тг|тенге|kzt/gi, '')
+    .replace(/₸|тг|тенге|kzt|usd|eur|доллар|долларов|евро/gi, '')
     .replace(/\s+/g, ' ')
     .trim();
 
@@ -253,59 +402,90 @@ const buildLocalParsedTransaction = (
       amount,
       account_id: account?.id || null,
       category_id: category?.id || null,
+      category_name: type === 'transfer' ? null : suggestedCategoryName,
       note: cleanNote || text.trim(),
       tags,
     },
   ];
 };
 
-const normalizeTransactions = (
+const normalizeEdgeTransactions = (
   rawTransactions: any[],
   accounts: Account[],
-  categories: Category[]
+  categories: Category[],
+  originalText = ''
 ): ParsedTransaction[] => {
   return (rawTransactions || [])
     .map((item) => {
-      const type =
-        item?.type === 'income' || item?.type === 'transfer'
-          ? item.type
-          : 'expense';
+      const rawType: 'expense' | 'income' | 'transfer' =
+        item?.type === 'income' || item?.operation_type === 'income'
+          ? 'income'
+          : item?.type === 'transfer' || item?.operation_type === 'transfer'
+            ? 'transfer'
+            : 'expense';
 
+      const textForSemantic = `${originalText} ${item?.note || ''} ${item?.description || ''} ${item?.category_name || item?.categoryName || item?.category || ''}`;
+      const inferredType = inferTransactionType(textForSemantic);
+      const type = rawType === 'transfer' ? 'transfer' : inferredType;
+
+      const amount = safeNumber(item?.amount ?? item?.sum ?? item?.value ?? item?.price);
       const accountExists = accounts.some((account) => account.id === item?.account_id);
 
-      const categoryExists = categories.some(
-        (category) => category.id === item?.category_id
+      const rawCategoryId = item?.category_id || item?.categoryId || null;
+      const rawCategoryName =
+        item?.category_name ||
+        item?.categoryName ||
+        item?.category ||
+        item?.name ||
+        '';
+
+      const strongSemanticCategoryName = getStrongSemanticCategoryName(textForSemantic, type);
+      const semanticCategory = strongSemanticCategoryName
+        ? findCategoryByName(strongSemanticCategoryName, categories, type)
+        : null;
+
+      const categoryById = categories.find(
+        (category) => category.id === rawCategoryId && category.type === type
       );
 
-      const fallbackCategory = categories.find((category) => category.type === type);
+      const categoryByName = findCategoryByName(rawCategoryName, categories, type);
+      const fallbackCategory = findCategoryByText(textForSemantic, categories, type);
+
+      const selectedCategory =
+        semanticCategory ||
+        categoryById ||
+        categoryByName ||
+        fallbackCategory;
+
+      const suggestedCategoryName =
+        selectedCategory?.name ||
+        strongSemanticCategoryName ||
+        rawCategoryName ||
+        getSuggestedCategoryName(textForSemantic, type);
 
       return {
         type,
-        amount: safeNumber(item?.amount),
+        amount,
         account_id: accountExists ? item.account_id : accounts[0]?.id || null,
-        to_account_id: item?.to_account_id || null,
-        category_id: categoryExists
-          ? item.category_id
-          : fallbackCategory?.id || categories[0]?.id || null,
-        note: String(item?.note || 'Операция').trim(),
-        tags: String(item?.tags || '').trim(),
+        to_account_id: item?.to_account_id || item?.toAccountId || null,
+        category_id: type === 'transfer' ? null : selectedCategory?.id || null,
+        category_name: type === 'transfer' ? null : suggestedCategoryName,
+        note: String(item?.note || item?.description || item?.title || suggestedCategoryName || 'Операция').trim(),
+        tags: Array.isArray(item?.tags)
+          ? item.tags.join(', ')
+          : String(item?.tags || '').trim(),
       } as ParsedTransaction;
     })
     .filter((item) => item.amount > 0 && item.account_id);
 };
 
-// ==========================================
-// ФУНКЦИЯ 1: Ввод операций текстом/голосом
-// ==========================================
 export const parseExpenseWithAI = async (
   text: string,
   userId: string
 ): Promise<ParsedTransaction[] | null> => {
   const cleanText = text.trim();
 
-  if (!cleanText || !userId) {
-    return [];
-  }
+  if (!cleanText || !userId) return [];
 
   try {
     const { accounts, categories } = await loadUserFinanceDictionaries(userId);
@@ -315,77 +495,23 @@ export const parseExpenseWithAI = async (
       return [];
     }
 
-    const accountsList =
-      accounts.map((account) => `- ${account.name} (ID: ${account.id})`).join('\n') ||
-      'Нет счетов';
-
-    const categoriesList =
-      categories
-        .map(
-          (category) =>
-            `- ${category.name} [Тип: ${category.type}] (ID: ${category.id})`
-        )
-        .join('\n') || 'Нет категорий';
-
-    const systemInstruction = `
-Ты финансовый ИИ-ассистент приложения FinBuddy.
-Твоя задача — извлечь финансовые операции из текста пользователя.
-
-${KAZAKHSTAN_AI_RULES}
-
-Верни только строгий JSON объект с ключом "transactions".
-Никакого markdown, комментариев или пояснений.
-
-Доступные счета:
-${accountsList}
-
-Доступные категории:
-${categoriesList}
-
-Правила:
-1. type: только "expense", "income" или "transfer".
-2. amount: только число. Сумма всегда в казахстанских тенге, KZT.
-3. account_id: ID подходящего счета из списка. Если явно не указан, выбери наиболее подходящий доступный счет.
-4. category_id: ID подходящей категории из списка. Для расхода выбирай категорию type="expense", для дохода type="income".
-5. note: короткое понятное описание операции.
-6. tags: ключевые слова через запятую. Извлекай бренды, места, назначение покупки.
-7. Если в тексте несколько операций, верни несколько объектов в массиве.
-8. Не придумывай ID, используй только ID из списков.
-9. Если пользователь пишет "тг", "тенге", "₸" или просто число — это KZT.
-
-Формат:
-{
-  "transactions": [
-    {
-      "type": "expense",
-      "amount": 2500,
-      "account_id": "uuid",
-      "category_id": "uuid",
-      "note": "Кофе в Starbucks",
-      "tags": "кофе, starbucks"
-    }
-  ]
-}
-`;
-
     try {
-      const content = await fetchGroqChat(
-        [
-          { role: 'system', content: systemInstruction },
-          { role: 'user', content: cleanText },
-        ],
-        {
-          temperature: 0,
-          max_tokens: 800,
-          json: true,
-        }
-      );
+      const { data, error } = await supabase.functions.invoke('parse-transaction', {
+        body: {
+          text: cleanText,
+        },
+      });
 
-      const parsed = extractJsonObject(content);
-      const transactions = normalizeTransactions(
-        parsed?.transactions || [],
+      if (error) {
+        console.warn('parse-transaction Edge Function недоступна, используется локальный парсер:', error);
+        return buildLocalParsedTransaction(cleanText, accounts, categories);
+      }
+
+      const transactions = normalizeEdgeTransactions(
+        data?.transactions || [],
         accounts,
-        categories
+        categories,
+        cleanText
       );
 
       if (transactions.length > 0) {
@@ -393,8 +519,8 @@ ${categoriesList}
       }
 
       return buildLocalParsedTransaction(cleanText, accounts, categories);
-    } catch (aiError) {
-      console.warn('AI-ввод недоступен, используется локальный парсер:', aiError);
+    } catch (edgeError) {
+      console.warn('parse-transaction Edge Function недоступна, используется локальный парсер:', edgeError);
       return buildLocalParsedTransaction(cleanText, accounts, categories);
     }
   } catch (error) {
@@ -403,242 +529,111 @@ ${categoriesList}
   }
 };
 
-// ==========================================
-// ФУНКЦИЯ 2: Финансовая аналитика
-// ==========================================
 export const getBudgetAnalysis = async (
   transactions: any[],
   totalIncome: number,
   totalExpense: number,
   periodName: string
 ): Promise<string> => {
-  const localFallbackAnalysis = () => {
-    const balance = totalIncome - totalExpense;
-    const expensePercent =
-      totalIncome > 0 ? Math.round((totalExpense / totalIncome) * 100) : 0;
+  const balance = totalIncome - totalExpense;
+  const expensePercent =
+    totalIncome > 0 ? Math.round((totalExpense / totalIncome) * 100) : 0;
 
-    const expenseTransactions = (transactions || []).filter(
-      (tx: any) => tx.type === 'expense'
-    );
+  const expenseTransactions = (transactions || []).filter((tx: any) => tx.type === 'expense');
+  const groupedExpenses: Record<string, number> = {};
 
-    const groupedExpenses: Record<string, number> = {};
+  expenseTransactions.forEach((tx: any) => {
+    const categoryData = Array.isArray(tx.categories) ? tx.categories[0] : tx.categories;
+    const categoryName =
+      categoryData?.name || tx.category_name || tx.category || 'Без категории';
 
-    expenseTransactions.forEach((tx: any) => {
-      const categoryData = Array.isArray(tx.categories)
-        ? tx.categories[0]
-        : tx.categories;
+    groupedExpenses[categoryName] = (groupedExpenses[categoryName] || 0) + safeNumber(tx.amount);
+  });
 
-      const categoryName =
-        categoryData?.name ||
-        tx.category_name ||
-        tx.category ||
-        'Без категории';
+  const topCategories = Object.entries(groupedExpenses)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 3);
 
-      groupedExpenses[categoryName] =
-        (groupedExpenses[categoryName] || 0) + safeNumber(tx.amount);
-    });
+  const mainRisk = topCategories[0];
 
-    const topCategories = Object.entries(groupedExpenses)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 3);
+  const topCategoryText =
+    topCategories.length > 0
+      ? topCategories
+          .map(([name, amount], index) => {
+            const percent = totalExpense > 0 ? Math.round((amount / totalExpense) * 100) : 0;
+            return `${index + 1}. ${name}: ${formatKzt(amount)} (${percent}%)`;
+          })
+          .join('\n')
+      : 'Расходов по категориям пока недостаточно.';
 
-    const mainRisk = topCategories[0];
+  let status = 'Финансовое состояние стабильное.';
+  let recommendation = 'Продолжайте отслеживать расходы и используйте лимиты в разделе «Бюджеты».';
 
-    const topCategoryText =
-      topCategories.length > 0
-        ? topCategories
-            .map(([name, amount], index) => {
-              const percent =
-                totalExpense > 0 ? Math.round((amount / totalExpense) * 100) : 0;
-
-              return `${index + 1}. ${name}: ${formatKzt(amount)} (${percent}%)`;
-            })
-            .join('\n')
-        : 'Расходов по категориям пока недостаточно.';
-
-    let status = 'Финансовое состояние стабильное.';
-    let recommendation =
-      'Продолжайте отслеживать расходы и используйте лимиты в разделе «Бюджеты».';
-
-    if (totalIncome <= 0 && totalExpense > 0) {
-      status = 'Доходы за выбранный период отсутствуют, но расходы уже есть.';
-      recommendation = 'Добавьте доходы или выберите другой период для анализа.';
-    } else if (expensePercent >= 100) {
-      status = 'Критический риск: расходы превышают доходы.';
-      recommendation =
-        'Сократите крупнейшие категории расходов и установите жесткие лимиты.';
-    } else if (expensePercent >= 90) {
-      status = 'Высокий риск перерасхода: расходы почти равны доходам.';
-      recommendation =
-        'Проверьте обязательные расходы и временно ограничьте необязательные покупки.';
-    } else if (expensePercent >= 70) {
-      status = 'Расходы занимают значительную часть дохода.';
-      recommendation =
-        'Определите 1–2 категории, где можно снизить расходы на 10–15%.';
-    } else if (expensePercent <= 50 && totalIncome > 0) {
-      status = 'Хороший уровень контроля расходов.';
-      recommendation =
-        'Можно увеличить накопления или направить остаток на финансовую цель.';
-    }
-
-    const savingPotential = Math.max(
-      0,
-      Math.round((mainRisk?.[1] || 0) * 0.15)
-    );
-
-    return [
-      'AI-анализ временно недоступен, поэтому показан локальный анализ.',
-      '',
-      `Период: ${periodName}`,
-      `Доходы: ${formatKzt(totalIncome)}`,
-      `Расходы: ${formatKzt(totalExpense)}`,
-      `Остаток: ${formatKzt(balance)}`,
-      `Доля расходов от дохода: ${expensePercent}%`,
-      '',
-      `1. Общий вывод: ${status}`,
-      `2. Главная зона риска: ${mainRisk ? mainRisk[0] : 'недостаточно данных'}`,
-      `3. Крупные категории расходов:`,
-      topCategoryText,
-      `4. Потенциал экономии: примерно ${formatKzt(savingPotential)} в месяц.`,
-      `5. Рекомендация: ${recommendation}`,
-    ].join('\n');
-  };
-
-  try {
-    const expenseTransactions = (transactions || []).filter(
-      (tx: any) => tx.type === 'expense'
-    );
-
-    const groupedExpenses: Record<string, number> = {};
-
-    expenseTransactions.forEach((tx: any) => {
-      const categoryData = Array.isArray(tx.categories)
-        ? tx.categories[0]
-        : tx.categories;
-
-      const categoryName =
-        categoryData?.name ||
-        tx.category_name ||
-        tx.category ||
-        'Без категории';
-
-      groupedExpenses[categoryName] =
-        (groupedExpenses[categoryName] || 0) + safeNumber(tx.amount);
-    });
-
-    const balance = totalIncome - totalExpense;
-    const expensePercent =
-      totalIncome > 0 ? Math.round((totalExpense / totalIncome) * 100) : 0;
-
-    const prompt = `
-Проанализируй личные финансы пользователя приложения FinBuddy.
-
-${KAZAKHSTAN_AI_RULES}
-
-Период: ${periodName}
-
-Показатели:
-- Доходы: ${formatKzt(totalIncome)}
-- Расходы: ${formatKzt(totalExpense)}
-- Остаток: ${formatKzt(balance)}
-- Доля расходов от дохода: ${expensePercent}%
-
-Расходы по категориям:
-${JSON.stringify(groupedExpenses, null, 2)}
-
-Дай ответ на русском языке в таком формате:
-
-1. Общий вывод:
-2. Главная зона риска:
-3. Что можно сократить:
-4. Потенциал экономии:
-5. Практическая рекомендация:
-
-Строго используй валюту тенге и формат "25 000 ₸".
-Не используй рубли, ₽ или RUB.
-Ответ должен быть коротким, конкретным и полезным.
-`;
-
-    const content = await fetchGroqChat(
-      [
-        {
-          role: 'system',
-          content: `
-Ты финансовый аналитик FinBuddy.
-
-${KAZAKHSTAN_AI_RULES}
-
-Отвечай кратко, понятно и на русском языке.
-Все суммы — только в казахстанских тенге, формат "25 000 ₸".
-`,
-        },
-        {
-          role: 'user',
-          content: prompt,
-        },
-      ],
-      {
-        temperature: 0.3,
-        max_tokens: 700,
-      }
-    );
-
-    return sanitizeCurrencyText(content);
-  } catch (error) {
-    console.warn('AI-анализ недоступен, используется локальный анализ:', error);
-    return localFallbackAnalysis();
+  if (totalIncome <= 0 && totalExpense > 0) {
+    status = 'Доходы за выбранный период отсутствуют, но расходы уже есть.';
+    recommendation = 'Добавьте доходы или выберите другой период для анализа.';
+  } else if (expensePercent >= 100) {
+    status = 'Критический риск: расходы превышают доходы.';
+    recommendation = 'Сократите крупнейшие категории расходов и установите жесткие лимиты.';
+  } else if (expensePercent >= 90) {
+    status = 'Высокий риск перерасхода: расходы почти равны доходам.';
+    recommendation = 'Проверьте обязательные расходы и временно ограничьте необязательные покупки.';
+  } else if (expensePercent >= 70) {
+    status = 'Расходы занимают значительную часть дохода.';
+    recommendation = 'Определите 1–2 категории, где можно снизить расходы на 10–15%.';
+  } else if (expensePercent <= 50 && totalIncome > 0) {
+    status = 'Хороший уровень контроля расходов.';
+    recommendation = 'Можно увеличить накопления или направить остаток на финансовую цель.';
   }
+
+  const savingPotential = Math.max(0, Math.round((mainRisk?.[1] || 0) * 0.15));
+
+  return [
+    'Локальный анализ FinBuddy.',
+    '',
+    `Период: ${periodName}`,
+    `Доходы: ${formatKzt(totalIncome)}`,
+    `Расходы: ${formatKzt(totalExpense)}`,
+    `Остаток: ${formatKzt(balance)}`,
+    `Доля расходов от дохода: ${expensePercent}%`,
+    '',
+    `1. Общий вывод: ${status}`,
+    `2. Главная зона риска: ${mainRisk ? mainRisk[0] : 'недостаточно данных'}`,
+    '3. Крупные категории расходов:',
+    topCategoryText,
+    `4. Потенциал экономии: примерно ${formatKzt(savingPotential)} в месяц.`,
+    `5. Рекомендация: ${recommendation}`,
+  ].join('\n');
 };
 
-// ==========================================
-// ФУНКЦИЯ 3: Перевод голоса в текст
-// ==========================================
 export const transcribeAudio = async (audioUri: string): Promise<string | null> => {
-  const apiKey = getGroqKey();
-
-  if (!apiKey) {
-    console.warn('EXPO_PUBLIC_GROQ_API_KEY не найден. Голосовой ввод недоступен.');
-    return null;
-  }
-
   if (!audioUri) {
     console.warn('audioUri пустой');
     return null;
   }
 
   try {
-    const formData = new FormData();
-
-    formData.append('file', {
-      uri: audioUri,
-      name: 'audio.m4a',
-      type: 'audio/m4a',
-    } as any);
-
-    formData.append('model', WHISPER_MODEL);
-    formData.append('language', 'ru');
-
-    const response = await fetch(GROQ_TRANSCRIPTION_URL, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${apiKey}`,
-      },
-      body: formData,
+    const audioBase64 = await FileSystem.readAsStringAsync(audioUri, {
+      encoding: 'base64',
     });
 
-    const rawText = await response.text();
+    const { data, error } = await supabase.functions.invoke('transcribe-audio', {
+      body: {
+        audioBase64,
+        mimeType: 'audio/m4a',
+        filename: 'voice.m4a',
+        language: 'ru',
+      },
+    });
 
-    if (!response.ok) {
-      console.error('Groq Whisper Error Status:', response.status);
-      console.error('Groq Whisper Error Body:', rawText);
+    if (error) {
+      console.error('Ошибка Edge Function transcribe-audio:', error);
       return null;
     }
 
-    const data = JSON.parse(rawText);
-
     return data?.text || null;
   } catch (error) {
-    console.error('Audio Transcription Error:', error);
+    console.error('Audio Transcription Edge Error:', error);
     return null;
   }
 };

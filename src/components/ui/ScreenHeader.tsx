@@ -1,6 +1,7 @@
 import React from 'react';
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { useNavigation } from '@react-navigation/native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { colors, radius, typography } from '../../theme';
 import AppIcon, { IconName } from './AppIcon';
@@ -21,6 +22,7 @@ export default function ScreenHeader({
   icon?: IconName;
 }) {
   const navigation = useNavigation<any>();
+  const insets = useSafeAreaInsets();
 
   const canGoBack = navigation.canGoBack?.() || false;
   const shouldShowBack = back || canGoBack;
@@ -31,12 +33,11 @@ export default function ScreenHeader({
       return;
     }
 
-    // fallback, если экран открыт напрямую или нет истории навигации
     navigation.navigate('Root');
   };
 
   return (
-    <View style={styles.header}>
+    <View style={[styles.header, { paddingTop: Math.max(insets.top, 8) }]}>
       {shouldShowBack && (
         <TouchableOpacity style={styles.backButton} onPress={handleBack} activeOpacity={0.82}>
           <AppIcon name="back" size={21} color={colors.ink} />
@@ -49,9 +50,15 @@ export default function ScreenHeader({
         </View>
       )}
 
-      <View style={{ flex: 1 }}>
-        <Text style={styles.title}>{title}</Text>
-        {!!subtitle && <Text style={styles.subtitle}>{subtitle}</Text>}
+      <View style={styles.titleBlock}>
+        <Text style={styles.title} numberOfLines={1}>
+          {title}
+        </Text>
+        {!!subtitle && (
+          <Text style={styles.subtitle} numberOfLines={2}>
+            {subtitle}
+          </Text>
+        )}
       </View>
 
       {!!rightText && (
@@ -67,7 +74,7 @@ const styles = StyleSheet.create({
   header: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 18,
+    marginBottom: 16,
   },
 
   backButton: {
@@ -92,6 +99,11 @@ const styles = StyleSheet.create({
     marginRight: 12,
   },
 
+  titleBlock: {
+    flex: 1,
+    minWidth: 0,
+  },
+
   title: {
     ...typography.title,
   },
@@ -101,6 +113,7 @@ const styles = StyleSheet.create({
     fontSize: 13,
     color: colors.inkMuted,
     fontWeight: '700',
+    lineHeight: 18,
   },
 
   rightButton: {
@@ -108,6 +121,7 @@ const styles = StyleSheet.create({
     borderRadius: radius.md,
     paddingHorizontal: 14,
     paddingVertical: 11,
+    marginLeft: 10,
   },
 
   rightText: {
